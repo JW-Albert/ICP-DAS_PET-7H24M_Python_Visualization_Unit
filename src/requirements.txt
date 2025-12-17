@@ -1,0 +1,29 @@
+# PET-7H24M Python版本依賴套件
+# 安裝指令: pip install -r requirements.txt
+
+# Web 伺服器（Flask）
+# Flask 3.1.2+ 支援 Python 3.7+
+Flask>=3.1.2
+
+# SQL 資料庫連線（MySQL/MariaDB）
+# pymysql 或 mysql-connector-python 二選一
+pymysql>=1.0.2
+# mysql-connector-python>=8.0.33  # 可選，如果不想使用 pymysql
+
+# 系統相關（通常已內建，不需要額外安裝）
+# configparser - Python 3.2+ 內建模組
+# threading - Python內建模組
+# csv - Python內建模組
+# os - Python內建模組
+# time - Python內建模組
+# datetime - Python內建模組
+# typing - Python 3.5+ 內建模組
+# queue - Python內建模組
+# ctypes - Python內建模組（用於調用 libhsdaq.so）
+
+# 注意：PET-7H24M 使用 HSDAQ 函式庫（libhsdaq.so）
+# 函式庫檔案需要放置在以下路徑之一：
+# - docs/ICP-DAS_PET-7H24M-SelfMade/services/daq/include/hsdaq/libhsdaq.so
+# - /usr/local/lib/libhsdaq.so
+# - /usr/lib/libhsdaq.so
+# - ./libhsdaq.so
