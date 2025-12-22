@@ -5,10 +5,12 @@
 PET-7H24M 即時資料可視化系統是一個基於 Python 的振動數據採集與可視化平台，用於從 **PET-7H24M**（TCP/IP）設備取得振動數據，並在瀏覽器中即時顯示所有資料點的連續曲線，同時自動進行 CSV 儲存。
 
 本系統提供完整的 Web 介面，讓使用者可以透過瀏覽器操作，不需進入終端機，即可：
-- 修改設定檔（`PET-7H24M.ini`、`Master.ini`）
+- 修改設定檔（`PET-7H24M.ini`、`csv.ini`、`sql.ini`）
+- 配置通道開關（動態啟用/停用 AI0-AI3 通道）
 - 輸入資料標籤（Label）
 - 按下「開始讀取」即啟動採集與即時顯示
-- 系統同時自動分檔儲存資料（根據 `Master.ini` 的秒數）
+- 系統同時自動分檔儲存資料（根據 `csv.ini` 的秒數）
+- 可選的 SQL 資料庫上傳功能（根據 `sql.ini` 設定）
 - 按下「停止」即可安全結束
 
 ## 功能特性
@@ -23,9 +25,12 @@ PET-7H24M 即時資料可視化系統是一個基於 Python 的振動數據採�
 ### 技術特性
 - 使用 Flask 提供 Web 服務
 - 使用 Chart.js 實現即時圖表（每 200ms 更新）
-- 多執行緒架構，確保資料採集與 Web 服務不互相干擾
-- 記憶體中資料傳遞，高效能即時處理
-- 支援可配置的多通道資料顯示（預設 2 通道）
+- 多執行緒架構（5 個獨立執行緒：Flask、DAQ Reading、Collection、CSV Writer、SQL Writer）
+- Queue 架構進行執行緒間通訊，確保資料採集與 Web 服務不互相干擾
+- 降頻處理優化網頁顯示效能（降頻比例 25:1）
+- 支援動態通道配置（可啟用/停用 AI0-AI3 通道）
+- 高效能 CSV 寫入（128KB 緩衝區、批次寫入、定期刷新）
+- 可選的 SQL 資料庫上傳功能（MySQL/MariaDB）
 
 ## 系統需求
 
@@ -46,6 +51,7 @@ PET-7H24M 即時資料可視化系統是一個基於 Python 的振動數據採�
 ### Python 套件依賴
 請參考 `src/requirements.txt` 檔案，主要依賴包括：
 - `Flask>=3.1.2` - Web 伺服器
+- `pymysql>=1.0.2` - SQL 資料庫連線（可選，用於 SQL 上傳功能）
 
 ## 安裝說明
 
@@ -140,7 +146,9 @@ Press Ctrl+C to stop the server
 
 6. **管理設定檔**
    - 點擊「設定檔管理」連結
-   - 可以編輯 `PET-7H24M.ini` 和 `Master.ini`
+   - 可以編輯 `PET-7H24M.ini`、`csv.ini` 和 `sql.ini`
+   - 可以配置通道開關（啟用/停用 AI0-AI3）
+   - 可以設定 SQL 資料庫連線（如果啟用 SQL 上傳）
    - 修改後點擊「儲存設定檔」
 
 7. **瀏覽和下載檔案**
@@ -154,27 +162,58 @@ Press Ctrl+C to stop the server
 
 #### PET-7H24M.ini
 ```ini
-[PET-7H24M]
-ipAddress = 192.168.9.40    # PET-7H24M 設備 IP 位址
-channelCount = 2            # 通道數
-sampleRate = 12800          # 取樣率（Hz）
-gain = 0                    # 增益
-triggerMode = 0             # 觸發模式
-targetCount = 0             # 目標計數（0 = 連續採集）
-dataTransMethod = 0         # 資料傳輸方式
-autoRun = 0                 # 自動執行模式
+[PET7H24M]
+; 基本連線設定
+device_ip = 192.168.255.1   # PET-7H24M 設備 IP 位址
+device_port = 502           # Modbus 埠號（通常為 502）
+
+; 取樣率設定（單位 Hz，建議值: 10000, 20000, 50000, 128000）
+sample_rate = 20000
+
+; 通道開關 (1=開啟, 0=關閉)
+enable_ai0 = 1              # 啟用 AI0 通道
+enable_ai1 = 1              # 啟用 AI1 通道
+enable_ai2 = 1              # 啟用 AI2 通道
+enable_ai3 = 1              # 啟用 AI3 通道
+
+; 進階掃描參數
+gain = 0                    # 增益（0 通常代表 +/- 10V 或 5V）
+trigger_mode = 0            # 觸發模式（0 = Software Trigger）
+target_count = 0            # 目標計數（0 = 連續採集模式）
+data_trans_method = 0       # 資料傳輸方式（0 = Polling）
+auto_run = 0                # 自動執行模式（0 = 關閉）
 ```
 
-#### Master.ini
+**通道配置說明**：
+- 系統會根據 `enable_ai0`、`enable_ai1`、`enable_ai2`、`enable_ai3` 動態計算啟用的通道數
+- 至少必須啟用一個通道（否則會報錯）
+- 通道數會自動計算，例如：啟用 AI0 和 AI1 → 通道數 = 2
+
+#### csv.ini
 ```ini
-[SaveUnit]
-second = 5                   # 每個 CSV 檔案的資料時間長度（秒）
+[DumpUnit]
+second = 60                 # 每個 CSV 檔案的資料時間長度（秒）
+```
+
+#### sql.ini
+```ini
+[SQLServer]
+enabled = false             # 是否啟用 SQL 上傳功能
+host = localhost            # SQL 伺服器位址
+port = 3306                 # SQL 伺服器埠號
+user = root                 # SQL 使用者名稱
+password =                  # SQL 密碼
+database = pet7h24m        # 資料庫名稱
+
+[DumpUnit]
+second = 600                # SQL 上傳間隔（秒）
 ```
 
 **分檔邏輯說明**：
-- 系統會根據 `sampleRate × channels × second` 計算每個檔案應包含的資料點數
+- CSV 分檔：系統會根據 `sample_rate × channels × second` 計算每個檔案應包含的資料點數
 - 當累積的資料點數達到目標值時，自動建立新檔案
-- 例如：取樣率 12800 Hz，2 通道，5 秒 → 每個檔案約 128,000 個資料點
+- 例如：取樣率 20000 Hz，2 通道，60 秒 → 每個檔案約 2,400,000 個資料點
+- SQL 上傳：根據 `sql.ini` 中的 `DumpUnit.second` 設定上傳間隔
 
 ### 輸出檔案
 
@@ -186,10 +225,14 @@ YYYYMMDDHHMMSS_<Label>_002.csv
 ```
 
 每個 CSV 檔案包含：
-- `Timestamp` - 時間戳記
-- `Channel_1` - 通道 1 資料
-- `Channel_2` - 通道 2 資料
-- ...（根據通道數動態調整）
+- `Timestamp` - 時間戳記（格式：YYYY-MM-DD HH:MM:SS.ffffff，包含微秒精度）
+- `Channel_1` - 通道 1 資料（對應第一個啟用的通道，例如 AI0）
+- `Channel_2` - 通道 2 資料（對應第二個啟用的通道，例如 AI1）
+- ...（根據啟用的通道數動態調整）
+
+**注意**：通道編號對應啟用的通道順序，例如：
+- 如果只啟用 AI0 和 AI2，則 Channel_1 = AI0，Channel_2 = AI2
+- 如果啟用 AI0、AI1、AI2、AI3，則 Channel_1 = AI0，Channel_2 = AI1，Channel_3 = AI2，Channel_4 = AI3
 
 ## 檔案架構
 
@@ -197,22 +240,28 @@ YYYYMMDDHHMMSS_<Label>_002.csv
 ICP-DAS_PET-7H24M_Python_Visualization_Unit/
 │
 ├── API/
-│   ├── PET-7H24M.ini      # PET-7H24M 設備設定檔
-│   └── Master.ini          # 儲存設定檔
+│   ├── PET-7H24M.ini      # PET-7H24M 設備設定檔（連線、通道、取樣率等）
+│   ├── csv.ini            # CSV 分檔設定檔
+│   └── sql.ini            # SQL 資料庫上傳設定檔（可選）
 │
 ├── output/
 │   └── PET-7H24M/         # CSV 輸出目錄
-│       └── YYYYMMDDHHMMSS_<Label>_*.csv
+│       └── YYYYMMDDHHMMSS_<Label>/
+│           ├── YYYYMMDDHHMMSS_<Label>_001.csv
+│           ├── YYYYMMDDHHMMSS_<Label>_002.csv
+│           └── .sql_temp/  # SQL 暫存檔案目錄（如果啟用 SQL）
 │
 ├── src/
-│   ├── pet7h24m.py         # PET-7H24M 核心模組（TCP/IP 通訊）
-│   ├── csv_writer.py       # CSV 寫入器模組
-│   ├── main.py             # 主控制程式（Web 介面）
-│   ├── requirements.txt    # Python 依賴套件列表
-│   └── templates/          # HTML 模板目錄
-│       ├── index.html      # 主頁模板
-│       ├── config.html     # 設定檔管理頁面模板
-│       └── files.html      # 檔案瀏覽頁面模板
+│   ├── pet7h24m.py        # PET-7H24M 核心模組（TCP/IP 通訊，使用 HSDAQ 函式庫）
+│   ├── csv_writer.py      # CSV 寫入器模組（高效能批次寫入）
+│   ├── sql_uploader.py    # SQL 上傳器模組（MySQL/MariaDB）
+│   ├── logger.py          # 統一日誌系統模組
+│   ├── main.py            # 主控制程式（Web 介面，多執行緒架構）
+│   ├── requirements.txt   # Python 依賴套件列表
+│   └── templates/         # HTML 模板目錄
+│       ├── index.html     # 主頁模板（即時圖表）
+│       ├── config.html    # 設定檔管理頁面模板
+│       └── files.html     # 檔案瀏覽頁面模板
 │
 ├── docs/
 │   └── ICP-DAS_PET-7H24M-SelfMade/
@@ -222,9 +271,9 @@ ICP-DAS_PET-7H24M_Python_Visualization_Unit/
 │                   └── hsdaq/
 │                       └── libhsdaq.so  # HSDAQ 函式庫
 │
-├── deploy.sh               # 部署腳本
-├── run.sh                  # 啟動腳本
-└── README.md               # 本文件
+├── deploy.sh              # 部署腳本
+├── run.sh                 # 啟動腳本
+└── README.md              # 本文件
 ```
 
 ## API 路由說明
@@ -232,15 +281,43 @@ ICP-DAS_PET-7H24M_Python_Visualization_Unit/
 | 路由 | 方法 | 功能說明 |
 |------|------|----------|
 | `/` | GET | 主頁，顯示設定表單、Label 輸入、開始/停止按鈕與折線圖 |
-| `/data` | GET | 回傳目前最新資料 JSON 給前端 |
-| `/status` | GET | 檢查資料收集狀態 |
-| `/config` | GET | 顯示設定檔編輯頁面 |
+| `/data` | GET | 回傳目前最新資料 JSON 給前端（降頻後的資料） |
+| `/status` | GET | 檢查資料收集狀態（用於前端狀態恢復） |
+| `/sql_config` | GET | 取得 SQL 設定（從 sql.ini 檔案讀取） |
+| `/config` | GET | 顯示設定檔編輯頁面（PET-7H24M.ini、csv.ini、sql.ini） |
 | `/config` | POST | 儲存修改後的設定檔 |
-| `/start` | POST | 啟動 DAQ、CSVWriter 與即時顯示 |
-| `/stop` | POST | 停止所有執行緒、安全關閉 |
+| `/start` | POST | 啟動 DAQ、CSVWriter、SQLUploader 與即時顯示 |
+| `/stop` | POST | 停止所有執行緒、安全關閉，並上傳剩餘資料 |
 | `/files_page` | GET | 檔案瀏覽頁面 |
 | `/files` | GET | 列出 output 目錄中的檔案和資料夾（查詢參數：path） |
 | `/download` | GET | 下載檔案（查詢參數：path） |
+
+**API 回應格式範例**：
+
+`/data` 回應：
+```json
+{
+  "success": true,
+  "data": [1.23, 4.56, 7.89, ...],
+  "counter": 123456,
+  "sample_rate": 20000,
+  "is_collecting": true,
+  "start_time": "2025-01-15T10:30:00"
+}
+```
+
+`/start` 請求格式：
+```json
+{
+  "label": "test_001",
+  "sql_enabled": false,
+  "sql_host": "localhost",
+  "sql_port": "3306",
+  "sql_user": "root",
+  "sql_password": "",
+  "sql_database": "pet7h24m"
+}
+```
 
 ## 故障排除
 
@@ -250,10 +327,12 @@ ICP-DAS_PET-7H24M_Python_Visualization_Unit/
 **症狀**：啟動後無法讀取資料
 
 **解決方法**：
-- 檢查 IP 位址是否正確（`PET-7H24M.ini` 中的 `ipAddress`）
+- 檢查 IP 位址是否正確（`PET-7H24M.ini` 中的 `device_ip`）
+- 檢查埠號是否正確（`PET-7H24M.ini` 中的 `device_port`，通常為 502）
 - 確認設備已正確連接網路
-- 檢查防火牆是否允許連接設備的 IP 和埠（9999, 10010）
+- 檢查防火牆是否允許連接設備的 IP 和埠
 - 使用 `ping` 確認設備是否可達
+- 確認至少啟用一個通道（`enable_ai0`、`enable_ai1`、`enable_ai2`、`enable_ai3` 至少一個為 1）
 
 #### 2. 找不到 libhsdaq.so
 **症狀**：啟動時顯示「無法找到 libhsdaq.so 函式庫」
@@ -276,9 +355,11 @@ ICP-DAS_PET-7H24M_Python_Visualization_Unit/
 **症狀**：圖表顯示異常或資料點不正確
 
 **解決方法**：
-- 檢查設定檔中的取樣率和通道數是否正確
-- 確認通道數設定與設備匹配
+- 檢查設定檔中的取樣率是否正確（`sample_rate`）
+- 確認通道開關設定（`enable_ai0`、`enable_ai1`、`enable_ai2`、`enable_ai3`）
+- 確認至少啟用一個通道
 - 檢查瀏覽器控制台是否有 JavaScript 錯誤
+- 確認通道數與實際啟用的通道數匹配（系統會自動計算）
 
 #### 5. CSV 檔案未產生
 **症狀**：資料收集正常但沒有 CSV 檔案
@@ -296,27 +377,49 @@ ICP-DAS_PET-7H24M_Python_Visualization_Unit/
 |--------|------|------|----------|
 | **主執行緒** | 控制流程、等待中斷 | 主執行緒 | - |
 | **Flask Thread** | 處理 HTTP 請求 | daemon=True | 主程式結束時自動終止 |
-| **Reading Thread** (PETAR400) | TCP/IP 資料讀取迴圈 | daemon=True | `reading` 旗標 |
-| **Collection Thread** (main.py) | 資料處理與分發 | daemon=True | `is_collecting` 旗標 |
+| **DAQ Reading Thread** | TCP/IP 資料讀取迴圈（pet7h24m.py） | daemon=True | `reading` 旗標 |
+| **Collection Thread** | 資料處理與分發到各 Queue | daemon=True | `is_collecting` 旗標 |
+| **CSV Writer Thread** | CSV 檔案寫入（批次處理） | daemon=True | `is_collecting` 旗標 |
+| **SQL Writer Thread** | SQL 暫存檔案寫入與上傳 | daemon=True | `is_collecting` 旗標 |
 
 ### 資料流
 
 ```
 PET-7H24M 設備
-    ↓ (TCP/IP)
-PETAR400 類別 (pet7h24m.py)
-    ↓ (資料佇列)
-主程式 (main.py)
-    ├──→ 即時顯示 (記憶體變數)
+    ↓ (TCP/IP, Modbus RTU)
+PET7H24M 類別 (pet7h24m.py)
+    ↓ (data_queue)
+Collection Thread (main.py)
+    ├──→ update_realtime_data() → web_data_queue (降頻處理)
     │       ↓
     │   Flask /data API
     │       ↓
     │   前端 Chart.js (templates/index.html)
     │
-    └──→ CSV 儲存 (csv_writer.py)
+    ├──→ csv_data_queue
+    │       ↓
+    │   CSV Writer Thread (csv_writer_loop)
+    │       ↓
+    │   CSV 檔案（高效能批次寫入，128KB 緩衝區）
+    │
+    └──→ sql_data_queue (如果啟用 SQL)
             ↓
-        CSV 檔案
+        SQL Writer Thread (sql_writer_loop)
+            ↓
+        SQL 暫存檔案 → SQL 資料庫上傳
 ```
+
+### Queue 架構
+
+系統使用 Queue 架構進行執行緒間通訊，確保資料不遺失：
+
+- **web_data_queue**：網頁顯示專用佇列（降頻後資料，maxsize=50000）
+- **csv_data_queue**：CSV 寫入佇列（原始資料，maxsize=50000）
+- **sql_data_queue**：SQL 上傳佇列（原始資料，maxsize=50000）
+
+**降頻處理**：
+- 網頁顯示使用降頻比例 25:1，減少前端資料量
+- 例如：取樣率 20000 Hz，降頻後約 800 點/秒供前端顯示
 
 ## 開發說明
 
@@ -332,8 +435,23 @@ PETAR400 類別 (pet7h24m.py)
 ### 程式碼結構
 
 - `pet7h24m.py`：負責 TCP/IP 通訊與資料讀取（使用 HSDAQ 函式庫）
+  - 支援動態通道配置（通道遮罩）
+  - 使用 Queue 進行資料傳遞
 - `csv_writer.py`：負責 CSV 檔案的建立與寫入
+  - 高效能批次寫入（128KB 緩衝區）
+  - 定期刷新機制（每 1 秒）
+  - 精確時間戳記（包含微秒精度）
+- `sql_uploader.py`：負責 SQL 資料庫上傳（MySQL/MariaDB）
+  - 動態建立資料表
+  - 批次插入資料
+  - 自動重連機制
+- `logger.py`：統一日誌系統
+  - 統一的日誌格式
+  - 可關閉 Debug 訊息
 - `main.py`：整合所有功能，提供 Web 介面（使用 Flask + templates）
+  - 多執行緒架構（5 個執行緒）
+  - Queue 架構進行執行緒間通訊
+  - 降頻處理優化網頁顯示
 - `templates/index.html`：主頁 HTML 模板（包含 Chart.js 圖表）
 - `templates/config.html`：設定檔管理頁面模板
 - `templates/files.html`：檔案瀏覽頁面模板
@@ -349,4 +467,17 @@ PETAR400 類別 (pet7h24m.py)
 ---
 
 **最後更新**：2025年1月
+**版本**：4.0.0
 **作者**：基於 ProWaveDAQ 系統改編
+
+## 版本歷史
+
+### v4.0.0 (2025-01)
+- 採用 Queue 架構進行執行緒間通訊
+- 新增降頻處理優化網頁顯示效能
+- 支援動態通道配置（通道遮罩）
+- 改進 CSV 寫入效能（128KB 緩衝區、批次寫入）
+- 新增 SQL 資料庫上傳功能（可選）
+- 設定檔結構更新（PET7H24M.ini、csv.ini、sql.ini）
+- 參數命名從 camelCase 改為 snake_case
+- 多執行緒架構優化（5 個獨立執行緒）
