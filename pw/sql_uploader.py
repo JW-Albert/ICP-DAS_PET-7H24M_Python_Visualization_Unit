@@ -9,8 +9,6 @@ SQL 上傳器模組
 - 自動重連機制
 - 重試機制和資料保護（失敗時保留資料）
 - 執行緒安全
-
-版本：4.0.0
 """
 
 import time
@@ -188,7 +186,7 @@ class SQLUploader:
             create_table_sql = f"""
             CREATE TABLE IF NOT EXISTS `{sanitized_table_name}` (
                 id BIGINT AUTO_INCREMENT PRIMARY KEY,
-                timestamp DATETIME NOT NULL,
+                timestamp DATETIME(6) NOT NULL,
                 label VARCHAR(255) NOT NULL,
                 channel_1 DOUBLE NOT NULL,
                 channel_2 DOUBLE NOT NULL,
