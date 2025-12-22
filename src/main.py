@@ -359,9 +359,15 @@ def start_collection():
     try:
         data = request.get_json()
         label = data.get('label', '') if data else ''
+        csv_enabled = data.get('csv_enabled', True) if data else True
+        sql_enabled_request = data.get('sql_enabled', False) if data else False
 
         if not label:
             return jsonify({'success': False, 'message': '請提供資料標籤'})
+
+        # 至少需要啟用一個選項
+        if not csv_enabled and not sql_enabled_request:
+            return jsonify({'success': False, 'message': '請至少選擇一個儲存選項（CSV 或 SQL）'})
 
         with data_lock:
             with web_data_queue.mutex:
@@ -409,20 +415,18 @@ def start_collection():
             sql_config_ini['password'] = sql_config_parser.get('SQLServer', 'password', fallback='')
             sql_config_ini['database'] = sql_config_parser.get('SQLServer', 'database', fallback='pet7h24m')
 
-        if data and 'sql_enabled' in data:
-            sql_enabled = data.get('sql_enabled', False)
-            if sql_enabled:
-                sql_config = {
-                    'host': data.get('sql_host', sql_config_ini['host']),
-                    'port': data.get('sql_port', sql_config_ini['port']),
-                    'user': data.get('sql_user', sql_config_ini['user']),
-                    'password': data.get('sql_password', sql_config_ini['password']),
-                    'database': data.get('sql_database', sql_config_ini['database'])
-                }
-            else:
-                sql_config = sql_config_ini.copy()
+        # 處理 SQL 設定（優先使用前端請求的設定）
+        if sql_enabled_request:
+            sql_enabled = True
+            sql_config = {
+                'host': data.get('sql_host', sql_config_ini['host']) if data else sql_config_ini['host'],
+                'port': data.get('sql_port', sql_config_ini['port']) if data else sql_config_ini['port'],
+                'user': data.get('sql_user', sql_config_ini['user']) if data else sql_config_ini['user'],
+                'password': data.get('sql_password', sql_config_ini['password']) if data else sql_config_ini['password'],
+                'database': data.get('sql_database', sql_config_ini['database']) if data else sql_config_ini['database']
+            }
         else:
-            sql_enabled = sql_enabled_ini
+            sql_enabled = False
             sql_config = sql_config_ini.copy()
 
         # 1. 初始化 DAQ 設備 (讀取 ini)
@@ -454,21 +458,26 @@ def start_collection():
         timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
         folder = f"{timestamp}_{label}"
         output_path = os.path.join(PROJECT_ROOT, "output", "PET-7H24M", folder)
-        os.makedirs(output_path, exist_ok=True)
+        
+        # 只有在啟用 CSV 或 SQL 時才建立資料夾
+        if csv_enabled or sql_enabled_request:
+            os.makedirs(output_path, exist_ok=True)
 
-        # 3. 根據通道數初始化 CSV Writer
-        try:
-            # 這裡傳入動態計算的 channels
-            csv_writer_instance = CSVWriter(
-                channels=channels,  # <--- 動態改變
-                output_dir=output_path,
-                label=label,
-                sample_rate=sample_rate   # <--- 動態改變
-            )
-        except Exception as e:
-            error(f"CSV Writer 初始化失敗: {e}")
-            is_collecting = False
-            return jsonify({'success': False, 'message': f'CSV Writer 初始化失敗: {str(e)}'})
+        # 3. 根據通道數初始化 CSV Writer（如果啟用）
+        csv_writer_instance = None
+        if csv_enabled:
+            try:
+                # 這裡傳入動態計算的 channels
+                csv_writer_instance = CSVWriter(
+                    channels=channels,  # <--- 動態改變
+                    output_dir=output_path,
+                    label=label,
+                    sample_rate=sample_rate   # <--- 動態改變
+                )
+            except Exception as e:
+                error(f"CSV Writer 初始化失敗: {e}")
+                is_collecting = False
+                return jsonify({'success': False, 'message': f'CSV Writer 初始化失敗: {str(e)}'})
 
         # 4. 根據通道數初始化 SQL Uploader (如果啟用)
         sql_uploader_instance = None
@@ -518,10 +527,16 @@ def start_collection():
 
         daq_instance.start_reading()
 
-        sql_status = f', SQL 上傳間隔: {sql_upload_interval} 秒' if sql_enabled else ''
+        # 構建狀態訊息
+        status_parts = [f'取樣率: {sample_rate} Hz', f'通道數: {channels}']
+        if csv_enabled:
+            status_parts.append(f'CSV 分檔間隔: {save_unit} 秒')
+        if sql_enabled:
+            status_parts.append(f'SQL 上傳間隔: {sql_upload_interval} 秒')
+        
         return jsonify({
             'success': True,
-            'message': f'資料收集已啟動 (取樣率: {sample_rate} Hz, 通道數: {channels}, 分檔間隔: {save_unit} 秒{sql_status})'
+            'message': f'資料收集已啟動 ({", ".join(status_parts)})'
         })
 
     except Exception as e:

@@ -157,6 +157,16 @@
                 <input type="text" id="labelInput" placeholder="請輸入資料標籤">
             </div>
             <div class="form-group">
+                <label style="display: flex; align-items: center; margin-bottom: 10px;">
+                    <input type="checkbox" id="csvEnabled" checked style="width: auto; margin-right: 8px;">
+                    <span>儲存 CSV 檔案</span>
+                </label>
+                <label style="display: flex; align-items: center;">
+                    <input type="checkbox" id="sqlEnabled" style="width: auto; margin-right: 8px;">
+                    <span>上傳 SQL 資料庫</span>
+                </label>
+            </div>
+            <div class="form-group">
                 <button class="btn btn-start" id="startBtn" onclick="startCollection()">開始讀取</button>
                 <button class="btn btn-stop" id="stopBtn" onclick="stopCollection()" disabled>停止讀取</button>
             </div>
@@ -307,12 +317,25 @@
                 return;
             }
 
+            const csvEnabled = document.getElementById('csvEnabled').checked;
+            const sqlEnabled = document.getElementById('sqlEnabled').checked;
+
+            // 至少需要啟用一個選項
+            if (!csvEnabled && !sqlEnabled) {
+                showStatus('請至少選擇一個儲存選項（CSV 或 SQL）！', 'error');
+                return;
+            }
+
             fetch('/start', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                 },
-                body: JSON.stringify({ label: label })
+                body: JSON.stringify({ 
+                    label: label,
+                    csv_enabled: csvEnabled,
+                    sql_enabled: sqlEnabled
+                })
             })
                 .then(response => response.json())
                 .then(data => {

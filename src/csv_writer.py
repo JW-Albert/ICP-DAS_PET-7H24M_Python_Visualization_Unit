@@ -53,7 +53,10 @@ class CSVWriter:
         self._create_new_file()
 
     def _create_output_directory(self) -> None:
-        """建立輸出目錄"""
+        """
+        建立輸出目錄
+        
+        注意：
             - 使用 exist_ok=True，避免目錄已存在時報錯
             - 如果建立失敗，會輸出錯誤訊息但不會拋出例外
         """

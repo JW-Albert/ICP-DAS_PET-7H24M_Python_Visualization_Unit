@@ -31,7 +31,7 @@ except ImportError:
 
 # 嘗試載入 HSDAQ 函式庫（Linux 版本）
 # 參考官方範例：docs/linux_python3_SDK_Demo/python_demo/PET-7H24M/LinuxArm64/
-HSDAQ_LIB_PATH = os.path.join(os.path.dirname(__file__), 'include', 'hsdaq', 'libhsdaq.so')
+HSDAQ_LIB_PATH = os.path.join(os.path.dirname(__file__), 'include', 'hsdaq', 'LinuxArm64', 'libhsdaq.so')
 
 try:
     dll = CDLL(HSDAQ_LIB_PATH)

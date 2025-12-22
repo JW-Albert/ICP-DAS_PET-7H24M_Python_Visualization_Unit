@@ -95,14 +95,6 @@ autoRun = 0
 EOF
 fi
 
-if [ ! -f "API/Master.ini" ]; then
-    echo "[Warning] API/Master.ini 不存在，將建立預設設定檔..."
-    cat > API/Master.ini << EOF
-[SaveUnit]
-second = 5
-EOF
-fi
-
 echo ""
 echo "============================================================"
 echo "部署完成！"
@@ -115,4 +107,3 @@ echo "Web 介面將在以下網址可用："
 echo "  http://localhost:8080/"
 echo "  http://<設備IP>:8080/"
 echo "============================================================"
-

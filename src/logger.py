@@ -24,7 +24,7 @@
     from logger import Logger
     Logger.set_debug_enabled(False)
 
-版本：4.0.0
+版本：5.0.0
 """
 
 import sys

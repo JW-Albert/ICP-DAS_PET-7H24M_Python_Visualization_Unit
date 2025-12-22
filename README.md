@@ -1,8 +1,12 @@
 # PET-7H24M 即時資料可視化系統
 
+**目標平台**：LinuxArm64 (aarch64)
+
 ## 系統概述
 
 PET-7H24M 即時資料可視化系統是一個基於 Python 的振動數據採集與可視化平台，用於從 **PET-7H24M**（TCP/IP）設備取得振動數據，並在瀏覽器中即時顯示所有資料點的連續曲線，同時自動進行 CSV 儲存。
+
+本系統針對 **ARM64 架構的 Linux 系統**進行開發與優化，需要 ARM64 版本的 HSDAQ 函式庫。
 
 本系統提供完整的 Web 介面，讓使用者可以透過瀏覽器操作，不需進入終端機，即可：
 - 修改設定檔（`PET-7H24M.ini`、`csv.ini`、`sql.ini`）
@@ -34,19 +38,24 @@ PET-7H24M 即時資料可視化系統是一個基於 Python 的振動數據採�
 
 ## 系統需求
 
+### 平台需求
+- **目標平台**：LinuxArm64 (aarch64)
+- 本系統針對 ARM64 架構的 Linux 系統進行優化
+- 需要 ARM64 版本的 HSDAQ 函式庫（libhsdaq.so）
+
 ### 硬體需求
 - PET-7H24M 設備（透過 TCP/IP 連接）
 - 網路連線
-- 支援 Python 3.9+ 的系統（建議 DietPi 或其他 Debian-based 系統）
+- ARM64 架構的處理器（例如：Raspberry Pi 4/5、Jetson 系列等）
 
 ### 軟體需求
 - Python 3.9 或更高版本
-- 支援的作業系統：
+- 支援的作業系統（ARM64 架構）：
   - DietPi（建議）
-  - Debian-based Linux 發行版
-  - Ubuntu
-  - Raspberry Pi OS
-- HSDAQ 函式庫（libhsdaq.so）
+  - Debian-based Linux 發行版（ARM64）
+  - Ubuntu（ARM64）
+  - Raspberry Pi OS（64-bit）
+- HSDAQ 函式庫（libhsdaq.so，ARM64 版本）
 
 ### Python 套件依賴
 請參考 `src/requirements.txt` 檔案，主要依賴包括：
@@ -57,11 +66,17 @@ PET-7H24M 即時資料可視化系統是一個基於 Python 的振動數據採�
 
 ### 1. 確認 HSDAQ 函式庫
 
+**重要**：本系統需要 **ARM64 (aarch64)** 版本的 `libhsdaq.so` 函式庫。
+
 確保 `libhsdaq.so` 函式庫已放置在以下路徑之一：
-- `docs/ICP-DAS_PET-7H24M-SelfMade/services/daq/include/hsdaq/libhsdaq.so`
+- `src/include/hsdaq/LinuxArm64/libhsdaq.so`（優先檢查）
+- `docs/linux_python3_SDK_Demo/python_demo/PET-7H24M/LinuxArm64/ET7H24_AI_Buffer_Continue/libhsdaq.so`
+- `docs/linux_python3_SDK_Demo/python_demo/PET-7H24M/LinuxArm64/ET7H24_N_Sample_float/libhsdaq.so`
 - `/usr/local/lib/libhsdaq.so`
 - `/usr/lib/libhsdaq.so`
 - `./libhsdaq.so`
+
+**注意**：如果使用 x86_64 或其他架構的函式庫，系統會顯示錯誤訊息並無法啟動。
 
 ### 2. 簡易安裝指令
 
@@ -334,13 +349,16 @@ ICP-DAS_PET-7H24M_Python_Visualization_Unit/
 - 使用 `ping` 確認設備是否可達
 - 確認至少啟用一個通道（`enable_ai0`、`enable_ai1`、`enable_ai2`、`enable_ai3` 至少一個為 1）
 
-#### 2. 找不到 libhsdaq.so
-**症狀**：啟動時顯示「無法找到 libhsdaq.so 函式庫」
+#### 2. 找不到 libhsdaq.so 或架構不匹配
+**症狀**：啟動時顯示「無法找到 libhsdaq.so 函式庫」或「函式庫架構不匹配」
 
 **解決方法**：
 - 確認函式庫檔案已放置在正確路徑
 - 檢查檔案權限（應可讀取）
-- 確認函式庫版本與系統架構相容
+- **確認函式庫為 ARM64 (aarch64) 版本**（本系統僅支援 ARM64）
+- 使用 `file libhsdaq.so` 命令檢查函式庫架構
+- 如果顯示 "ELF 64-bit LSB shared object, x86-64"，表示是 x86_64 版本，需要 ARM64 版本
+- 從 ICP-DAS 官方取得 ARM64 版本的 libhsdaq.so
 
 #### 3. Web 介面無法開啟
 **症狀**：無法在瀏覽器中開啟網頁
@@ -466,18 +484,10 @@ Collection Thread (main.py)
 
 ---
 
-**最後更新**：2025年1月
-**版本**：4.0.0
+**最後更新**：2025年12月
+**版本**：5.0.0
 **作者**：基於 ProWaveDAQ 系統改編
 
-## 版本歷史
+## 版本資訊
 
-### v4.0.0 (2025-01)
-- 採用 Queue 架構進行執行緒間通訊
-- 新增降頻處理優化網頁顯示效能
-- 支援動態通道配置（通道遮罩）
-- 改進 CSV 寫入效能（128KB 緩衝區、批次寫入）
-- 新增 SQL 資料庫上傳功能（可選）
-- 設定檔結構更新（PET7H24M.ini、csv.ini、sql.ini）
-- 參數命名從 camelCase 改為 snake_case
-- 多執行緒架構優化（5 個獨立執行緒）
+詳細的版本更新記錄請參考 [CHANGELOG.md](CHANGELOG.md)
