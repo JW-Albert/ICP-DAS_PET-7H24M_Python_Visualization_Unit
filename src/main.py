@@ -2,9 +2,17 @@
 # -*- coding: utf-8 -*-
 """
 PET-7H24M 即時資料可視化系統 - 主控制程式
-整合 DAQ、Web、CSV、SQL 四者運作
 
-版本：4.0.0
+此模組整合所有功能模組，提供完整的 Web 介面控制，支援：
+- Web 介面控制（使用 Flask 提供瀏覽器操作介面）
+- 即時資料可視化（使用 Chart.js 顯示多通道連續曲線圖）
+- 資料採集管理（整合 PET-7H24M 設備通訊）
+- CSV 自動儲存（根據設定檔自動分檔儲存資料）
+- SQL 資料庫上傳（可選的 MySQL/MariaDB 上傳功能）
+- 設定檔管理（透過 Web 介面編輯 PET-7H24M.ini、csv.ini、sql.ini）
+- 多執行緒架構（5 個獨立執行緒：Flask、DAQ Reading、Collection、CSV Writer、SQL Writer）
+- 執行緒安全通訊（使用 queue.Queue 進行執行緒間通訊）
+- 降頻佇列架構（web_data_queue 存儲降頻後的資料供前端使用）
 """
 
 import os
@@ -93,9 +101,7 @@ channels = 2  # 預設通道數，會在啟動時從 DAQ 取得
 # ==========================================
 
 def update_realtime_data(data: List[float]) -> None:
-    """
-    更新即時資料 (針對 Web 顯示進行降頻處理)
-    """
+    """更新即時資料（針對 Web 顯示進行降頻處理）"""
     global web_data_queue, WEB_DOWNSAMPLE_RATIO, data_counter
 
     if web_data_queue.full():
@@ -124,15 +130,11 @@ def update_realtime_data(data: List[float]) -> None:
 # Flask 路由
 @app.route('/')
 def index():
-    """主頁：顯示設定表單、Label 輸入、開始/停止按鈕與折線圖"""
     return render_template('index.html')
-
 
 @app.route('/files_page')
 def files_page():
-    """檔案瀏覽頁面"""
     return render_template('files.html')
-
 
 @app.route('/data')
 def get_data():
@@ -164,22 +166,7 @@ def get_data():
 
 @app.route('/status')
 def get_status():
-    """
-    檢查資料收集狀態（用於前端狀態恢復）
-    
-    當前端頁面載入時，會呼叫此 API 檢查後端狀態。
-    如果後端正在收集資料，前端會自動恢復狀態並開始更新圖表。
-    
-    Returns:
-        JSON 回應，包含：
-        - success: 是否成功
-        - is_collecting: 是否正在收集資料
-        - counter: 資料點計數器（總資料點數）
-    
-    使用場景：
-        - 頁面重新載入時恢復狀態
-        - 從其他頁面返回主頁時同步狀態
-    """
+    """檢查資料收集狀態（用於前端狀態恢復）"""
     global is_collecting, data_counter
     return jsonify({
         'success': True,
@@ -190,21 +177,7 @@ def get_status():
 
 @app.route('/sql_config')
 def get_sql_config():
-    """
-    取得 SQL 設定（從 sql.ini 檔案讀取）
-    
-    前端會使用此 API 讀取 SQL 設定，用於預填表單或判斷是否啟用 SQL 上傳。
-    
-    Returns:
-        JSON 回應，包含：
-        - success: 是否成功
-        - sql_config: SQL 設定字典
-        - message: 錯誤訊息（如果失敗）
-    
-    注意：
-        - 如果讀取失敗，返回預設設定（enabled=False）
-        - 密碼會以明文返回（前端需要顯示在表單中）
-    """
+    """取得 SQL 設定（從 sql.ini 檔案讀取）"""
     try:
         ini_file_path = "API/sql.ini"
         config = configparser.ConfigParser()
@@ -248,26 +221,10 @@ def get_sql_config():
 
 @app.route('/config', methods=['GET', 'POST'])
 def config():
-    """
-    顯示與修改設定檔（PET-7H24M.ini、Master.ini、sql.ini）
-    
-    GET 請求：
-        讀取三個設定檔的內容並顯示在編輯頁面（固定輸入框模式）。
-    
-    POST 請求：
-        接收表單資料並寫入三個設定檔。
-    
-    Returns:
-        GET: 渲染 config.html 模板，包含三個設定檔的內容
-        POST: JSON 回應，包含 success 和 message
-    
-    注意：
-        - 使用固定輸入框模式，防止使用者誤刪參數
-        - 所有設定檔使用 UTF-8 編碼
-    """
+    """顯示與修改設定檔（PET-7H24M.ini、csv.ini、sql.ini）"""
     ini_dir = "API"
     pet7h24m_ini = os.path.join(ini_dir, "PET-7H24M.ini")
-    master_ini = os.path.join(ini_dir, "Master.ini")
+    csv_ini = os.path.join(ini_dir, "csv.ini")
     sql_ini = os.path.join(ini_dir, "sql.ini")
 
     if request.method == 'POST':
@@ -275,46 +232,54 @@ def config():
             # 讀取 PET-7H24M.ini 設定
             pet7h24m_config = configparser.ConfigParser()
             pet7h24m_config.read(pet7h24m_ini, encoding='utf-8')
-            if not pet7h24m_config.has_section('PET-7H24M'):
-                pet7h24m_config.add_section('PET-7H24M')
+            if not pet7h24m_config.has_section('PET7H24M'):
+                pet7h24m_config.add_section('PET7H24M')
             
-            pet7h24m_config.set('PET-7H24M', 'ipAddress', request.form.get('pet7h24m_ipAddress', '192.168.9.40'))
-            pet7h24m_config.set('PET-7H24M', 'channelCount', request.form.get('pet7h24m_channelCount', '2'))
-            pet7h24m_config.set('PET-7H24M', 'sampleRate', request.form.get('pet7h24m_sampleRate', '12800'))
-            pet7h24m_config.set('PET-7H24M', 'gain', request.form.get('pet7h24m_gain', '0'))
-            pet7h24m_config.set('PET-7H24M', 'triggerMode', request.form.get('pet7h24m_triggerMode', '0'))
-            pet7h24m_config.set('PET-7H24M', 'targetCount', request.form.get('pet7h24m_targetCount', '0'))
-            pet7h24m_config.set('PET-7H24M', 'dataTransMethod', request.form.get('pet7h24m_dataTransMethod', '0'))
-            pet7h24m_config.set('PET-7H24M', 'autoRun', request.form.get('pet7h24m_autoRun', '0'))
+            pet7h24m_config.set('PET7H24M', 'device_ip', request.form.get('pet7h24m_device_ip', '192.168.255.1'))
+            pet7h24m_config.set('PET7H24M', 'device_port', request.form.get('pet7h24m_device_port', '502'))
+            pet7h24m_config.set('PET7H24M', 'sample_rate', request.form.get('pet7h24m_sample_rate', '20000'))
+            # 處理通道 checkbox（前端已處理，未勾選時會傳送 '0'，勾選時傳送 '1'）
+            pet7h24m_config.set('PET7H24M', 'enable_ai0', request.form.get('pet7h24m_enable_ai0', '0'))
+            pet7h24m_config.set('PET7H24M', 'enable_ai1', request.form.get('pet7h24m_enable_ai1', '0'))
+            pet7h24m_config.set('PET7H24M', 'enable_ai2', request.form.get('pet7h24m_enable_ai2', '0'))
+            pet7h24m_config.set('PET7H24M', 'enable_ai3', request.form.get('pet7h24m_enable_ai3', '0'))
+            pet7h24m_config.set('PET7H24M', 'gain', request.form.get('pet7h24m_gain', '0'))
+            pet7h24m_config.set('PET7H24M', 'trigger_mode', request.form.get('pet7h24m_trigger_mode', '0'))
+            pet7h24m_config.set('PET7H24M', 'target_count', request.form.get('pet7h24m_target_count', '0'))
+            pet7h24m_config.set('PET7H24M', 'data_trans_method', request.form.get('pet7h24m_data_trans_method', '0'))
+            pet7h24m_config.set('PET7H24M', 'auto_run', request.form.get('pet7h24m_auto_run', '0'))
 
-            # 讀取 Master.ini 設定
-            master_config = configparser.ConfigParser()
-            master_config.read(master_ini, encoding='utf-8')
-            if not master_config.has_section('SaveUnit'):
-                master_config.add_section('SaveUnit')
+            # 讀取 csv.ini 設定
+            csv_config = configparser.ConfigParser()
+            csv_config.read(csv_ini, encoding='utf-8')
+            if not csv_config.has_section('DumpUnit'):
+                csv_config.add_section('DumpUnit')
             
-            master_config.set('SaveUnit', 'second', request.form.get('master_second', '600'))
-            master_config.set('SaveUnit', 'sql_upload_interval', request.form.get('master_sql_upload_interval', '600'))
+            csv_config.set('DumpUnit', 'second', request.form.get('csv_second', '60'))
 
             # 讀取 sql.ini 設定
             sql_config = configparser.ConfigParser()
             sql_config.read(sql_ini, encoding='utf-8')
             if not sql_config.has_section('SQLServer'):
                 sql_config.add_section('SQLServer')
+            if not sql_config.has_section('DumpUnit'):
+                sql_config.add_section('DumpUnit')
             
+            # 處理 SQL enabled checkbox（前端已處理，未勾選時會傳送 'false'，勾選時傳送 'true'）
             sql_config.set('SQLServer', 'enabled', request.form.get('sql_enabled', 'false'))
             sql_config.set('SQLServer', 'host', request.form.get('sql_host', 'localhost'))
             sql_config.set('SQLServer', 'port', request.form.get('sql_port', '3306'))
             sql_config.set('SQLServer', 'user', request.form.get('sql_user', 'root'))
             sql_config.set('SQLServer', 'password', request.form.get('sql_password', ''))
             sql_config.set('SQLServer', 'database', request.form.get('sql_database', 'pet7h24m'))
+            sql_config.set('DumpUnit', 'second', request.form.get('sql_second', '60'))
 
             # 寫入檔案
             with open(pet7h24m_ini, 'w', encoding='utf-8') as f:
                 pet7h24m_config.write(f)
             
-            with open(master_ini, 'w', encoding='utf-8') as f:
-                master_config.write(f)
+            with open(csv_ini, 'w', encoding='utf-8') as f:
+                csv_config.write(f)
             
             with open(sql_ini, 'w', encoding='utf-8') as f:
                 sql_config.write(f)
@@ -331,26 +296,29 @@ def config():
         pass
     
     pet7h24m_data = {
-        'ipAddress': pet7h24m_config.get('PET-7H24M', 'ipAddress', fallback='192.168.9.40'),
-        'channelCount': pet7h24m_config.get('PET-7H24M', 'channelCount', fallback='2'),
-        'sampleRate': pet7h24m_config.get('PET-7H24M', 'sampleRate', fallback='12800'),
-        'gain': pet7h24m_config.get('PET-7H24M', 'gain', fallback='0'),
-        'triggerMode': pet7h24m_config.get('PET-7H24M', 'triggerMode', fallback='0'),
-        'targetCount': pet7h24m_config.get('PET-7H24M', 'targetCount', fallback='0'),
-        'dataTransMethod': pet7h24m_config.get('PET-7H24M', 'dataTransMethod', fallback='0'),
-        'autoRun': pet7h24m_config.get('PET-7H24M', 'autoRun', fallback='0')
+        'device_ip': pet7h24m_config.get('PET7H24M', 'device_ip', fallback='192.168.255.1'),
+        'device_port': pet7h24m_config.get('PET7H24M', 'device_port', fallback='502'),
+        'sample_rate': pet7h24m_config.get('PET7H24M', 'sample_rate', fallback='20000'),
+        'enable_ai0': pet7h24m_config.get('PET7H24M', 'enable_ai0', fallback='1'),
+        'enable_ai1': pet7h24m_config.get('PET7H24M', 'enable_ai1', fallback='1'),
+        'enable_ai2': pet7h24m_config.get('PET7H24M', 'enable_ai2', fallback='0'),
+        'enable_ai3': pet7h24m_config.get('PET7H24M', 'enable_ai3', fallback='0'),
+        'gain': pet7h24m_config.get('PET7H24M', 'gain', fallback='0'),
+        'trigger_mode': pet7h24m_config.get('PET7H24M', 'trigger_mode', fallback='0'),
+        'target_count': pet7h24m_config.get('PET7H24M', 'target_count', fallback='0'),
+        'data_trans_method': pet7h24m_config.get('PET7H24M', 'data_trans_method', fallback='0'),
+        'auto_run': pet7h24m_config.get('PET7H24M', 'auto_run', fallback='0')
     }
 
-    # 讀取 Master.ini
-    master_config = configparser.ConfigParser()
+    # 讀取 csv.ini
+    csv_config_parser = configparser.ConfigParser()
     try:
-        master_config.read(master_ini, encoding='utf-8')
+        csv_config_parser.read(csv_ini, encoding='utf-8')
     except:
         pass
     
-    master_data = {
-        'second': master_config.get('SaveUnit', 'second', fallback='600'),
-        'sql_upload_interval': master_config.get('SaveUnit', 'sql_upload_interval', fallback='600')
+    csv_data = {
+        'second': csv_config_parser.get('DumpUnit', 'second', fallback='60')
     }
 
     # 讀取 sql.ini
@@ -366,45 +334,19 @@ def config():
         'port': sql_config_parser.get('SQLServer', 'port', fallback='3306'),
         'user': sql_config_parser.get('SQLServer', 'user', fallback='root'),
         'password': sql_config_parser.get('SQLServer', 'password', fallback=''),
-        'database': sql_config_parser.get('SQLServer', 'database', fallback='pet7h24m')
+        'database': sql_config_parser.get('SQLServer', 'database', fallback='pet7h24m'),
+        'second': sql_config_parser.get('DumpUnit', 'second', fallback='60')
     }
 
     return render_template('config.html',
                            pet7h24m_data=pet7h24m_data,
-                           master_data=master_data,
+                           csv_data=csv_data,
                            sql_data=sql_data)
 
 
 @app.route('/start', methods=['POST'])
 def start_collection():
-    """
-    啟動資料收集（DAQ、CSVWriter、SQLUploader 與即時顯示）
-    
-    此函數會：
-    1. 驗證請求參數（label 必須提供）
-    2. 載入設定檔（Master.ini、PET-7H24M.ini、sql.ini）
-    3. 初始化 DAQ 設備並建立連線
-    4. 計算 CSV 分檔和 SQL 上傳的目標大小
-    5. 建立輸出目錄並初始化 CSV Writer
-    6. 初始化 SQL Uploader（如果啟用）
-    7. 啟動資料收集執行緒和 DAQ 讀取執行緒
-    
-    請求格式：
-        JSON，包含：
-        - label: 資料標籤（必需）
-        - sql_enabled: 是否啟用 SQL 上傳（可選）
-        - sql_host, sql_port, sql_user, sql_password, sql_database: SQL 設定（可選）
-    
-    Returns:
-        JSON 回應，包含：
-        - success: 是否成功
-        - message: 回應訊息（包含取樣率、分檔間隔、SQL 上傳間隔等資訊）
-    
-    注意：
-        - 如果已在收集中，返回錯誤
-        - SQL 設定可以從 sql.ini 讀取，也可以由前端提供（覆蓋 INI 設定）
-        - 輸出目錄格式：output/PET-7H24M/{timestamp}_{label}/
-    """
+    """啟動資料收集（DAQ、CSVWriter、SQLUploader 與即時顯示）"""
     global is_collecting, collection_thread, daq_instance, csv_writer_instance
     global target_size, current_data_size, realtime_data, data_counter
     global sql_uploader_instance, sql_target_size, sql_current_data_size, sql_enabled, sql_config
@@ -436,21 +378,19 @@ def start_collection():
             sql_sample_count = 0
             sql_start_time = None
 
-        ini_file_path = "API/Master.ini"
-        config = configparser.ConfigParser()
-        config.read(ini_file_path, encoding='utf-8')
+        # 讀取 CSV 分檔間隔（從 csv.ini）
+        csv_ini_file_path = "API/csv.ini"
+        csv_config_parser = configparser.ConfigParser()
+        csv_config_parser.read(csv_ini_file_path, encoding='utf-8')
+        save_unit = csv_config_parser.getint('DumpUnit', 'second', fallback=60)
 
-        if not config.has_section('SaveUnit'):
-            return jsonify({'success': False, 'message': '無法讀取 Master.ini'})
-
-        save_unit = config.getint('SaveUnit', 'second', fallback=5)
-        sql_upload_interval = config.getint('SaveUnit', 'sql_upload_interval', fallback=0)
-        if sql_upload_interval <= 0:
-            sql_upload_interval = save_unit
-
+        # 讀取 SQL 上傳間隔（從 sql.ini）
         sql_ini_file_path = "API/sql.ini"
         sql_config_parser = configparser.ConfigParser()
         sql_config_parser.read(sql_ini_file_path, encoding='utf-8')
+        
+        # 讀取 SQL 上傳間隔
+        sql_upload_interval = sql_config_parser.getint('DumpUnit', 'second', fallback=60)
         
         sql_enabled_ini = False
         sql_config_ini = {
@@ -485,12 +425,27 @@ def start_collection():
             sql_enabled = sql_enabled_ini
             sql_config = sql_config_ini.copy()
 
-        daq_instance = PET7H24M()
-        daq_instance.init_devices("API/PET-7H24M.ini")
-        sample_rate = daq_instance.get_sample_rate()
-        current_sample_rate = sample_rate
-        global channels
-        channels = daq_instance.get_channel_count()
+        # 1. 初始化 DAQ 設備 (讀取 ini)
+        try:
+            # 確保這裡是使用 PET7H24M 類別
+            if daq_instance is None:
+                daq_instance = PET7H24M()
+            
+            # 這一步會讀取 ini 並計算 channel_mask
+            daq_instance.init_devices("API/PET-7H24M.ini")
+            
+            # 2. 動態獲取配置 (關鍵！)
+            sample_rate = daq_instance.get_sample_rate()
+            current_sample_rate = sample_rate
+            global channels
+            channels = daq_instance.get_active_channel_count()
+            
+            info(f"系統啟動參數: 通道數={channels}, 取樣率={sample_rate} Hz")
+
+        except Exception as e:
+            error(f"設備初始化失敗: {e}")
+            is_collecting = False
+            return jsonify({'success': False, 'message': f'設備初始化失敗: {str(e)}'})
 
         expected_samples_per_second = sample_rate * channels
         target_size = save_unit * expected_samples_per_second
@@ -501,9 +456,21 @@ def start_collection():
         output_path = os.path.join(PROJECT_ROOT, "output", "PET-7H24M", folder)
         os.makedirs(output_path, exist_ok=True)
 
-        csv_writer_instance = CSVWriter(channels, output_path, label, sample_rate)
+        # 3. 根據通道數初始化 CSV Writer
+        try:
+            # 這裡傳入動態計算的 channels
+            csv_writer_instance = CSVWriter(
+                channels=channels,  # <--- 動態改變
+                output_dir=output_path,
+                label=label,
+                sample_rate=sample_rate   # <--- 動態改變
+            )
+        except Exception as e:
+            error(f"CSV Writer 初始化失敗: {e}")
+            is_collecting = False
+            return jsonify({'success': False, 'message': f'CSV Writer 初始化失敗: {str(e)}'})
 
-        # 初始化 SQL 上傳相關變數
+        # 4. 根據通道數初始化 SQL Uploader (如果啟用)
         sql_uploader_instance = None
         sql_temp_dir = None
         sql_current_temp_file = None
@@ -513,6 +480,7 @@ def start_collection():
         
         if sql_enabled:
             try:
+                # 使用動態獲取的通道數初始化 SQL Uploader
                 sql_uploader_instance = SQLUploader(channels, label, sql_config)
                 
                 # 建立暫存檔案目錄
@@ -563,25 +531,7 @@ def start_collection():
 
 @app.route('/stop', methods=['POST'])
 def stop_collection():
-    """
-    停止資料收集（停止所有執行緒、安全關閉，並上傳剩餘資料）
-    
-    此函數會：
-    1. 停止資料收集執行緒（設定 is_collecting = False）
-    2. 停止 DAQ 讀取執行緒
-    3. 上傳 SQL 緩衝區中的剩餘資料（如果啟用 SQL）
-    4. 關閉 CSV Writer 和 SQL Uploader
-    
-    Returns:
-        JSON 回應，包含：
-        - success: 是否成功
-        - message: 回應訊息
-    
-    注意：
-        - 如果未在收集中，返回錯誤
-        - 停止時會自動上傳 SQL 緩衝區中的剩餘資料（即使未達到門檻）
-        - 所有檔案和連線會安全關閉
-    """
+    """停止資料收集（停止所有執行緒、安全關閉，並上傳剩餘資料）"""
     global is_collecting, daq_instance, csv_writer_instance, sql_uploader_instance
     global current_data_size, sql_current_data_size, sql_enabled
     global sql_temp_dir, sql_current_temp_file
@@ -701,25 +651,7 @@ def finalize_upload():
 
 @app.route('/files')
 def list_files():
-    """
-    列出 output 目錄中的檔案和資料夾
-    
-    此 API 用於檔案瀏覽功能，可以瀏覽 output/PET-7H24M/ 目錄下的所有檔案和資料夾。
-    
-    查詢參數：
-        path (可選): 要瀏覽的子目錄路徑
-    
-    Returns:
-        JSON 回應，包含：
-        - success: 是否成功
-        - items: 檔案和資料夾列表
-        - current_path: 當前路徑
-        - message: 錯誤訊息（如果失敗）
-    
-    安全機制：
-        - 路徑標準化檢查，防止目錄遍歷攻擊
-        - 只允許存取 output/PET-7H24M/ 目錄下的檔案
-    """
+    """列出 output 目錄中的檔案和資料夾"""
     try:
         path = request.args.get('path', '')
         base_path = os.path.join(PROJECT_ROOT, "output", "PET-7H24M")
@@ -773,23 +705,7 @@ def list_files():
 
 @app.route('/download')
 def download_file():
-    """
-    下載檔案
-    
-    此 API 用於下載 output/PET-7H24M/ 目錄下的 CSV 檔案。
-    
-    查詢參數：
-        path (必需): 要下載的檔案路徑（相對於 output/PET-7H24M/）
-    
-    Returns:
-        檔案下載響應（如果成功）
-        或 JSON 錯誤回應（如果失敗）
-    
-    安全機制：
-        - 路徑標準化檢查，防止目錄遍歷攻擊
-        - 只允許下載 output/PET-7H24M/ 目錄下的檔案
-        - 不允許下載資料夾
-    """
+    """下載檔案"""
     try:
         path = request.args.get('path', '')
         if not path:
@@ -820,7 +736,7 @@ def download_file():
 
 
 def _create_new_temp_file() -> Optional[str]:
-    """建立新的暫存檔案"""
+    """建立新的 SQL 暫存檔案"""
     global sql_temp_dir, sql_current_temp_file, channels
 
     if not sql_temp_dir:
@@ -849,19 +765,7 @@ def _create_new_temp_file() -> Optional[str]:
 def _write_to_temp_file(
     data: List[float], sample_rate: int, start_time: datetime, sample_count: int
 ) -> int:
-    """
-    將資料寫入暫存檔案
-    
-    Args:
-        data: 振動數據列表
-        sample_rate: 取樣率
-        start_time: 全局起始時間
-        sample_count: 當前樣本計數
-        channels: 通道數
-    
-    Returns:
-        int: 更新後的樣本計數
-    """
+    """將資料寫入 SQL 暫存檔案"""
     global sql_current_temp_file
     
     if not sql_current_temp_file or not os.path.exists(sql_current_temp_file):
@@ -899,15 +803,7 @@ def _write_to_temp_file(
 
 
 def _upload_temp_file_if_needed():
-    """
-    檢查並上傳暫存檔案（如果資料量達到門檻）
-    
-    當累積的資料量達到 sql_target_size 時，會：
-    1. 上傳當前暫存檔案到 SQL
-    2. 刪除暫存檔案
-    3. 建立新的暫存檔案
-    4. 重置資料量計數器（保留超出部分的資料量）
-    """
+    """檢查並上傳 SQL 暫存檔案（如果資料量達到門檻）"""
     global sql_uploader_instance, sql_current_temp_file, sql_temp_dir, csv_writer_instance
     global sql_current_data_size, sql_target_size, channels
     
@@ -977,7 +873,7 @@ def _upload_temp_file_if_needed():
 
 
 def collection_loop():
-    """資料收集主迴圈"""
+    """資料收集主迴圈（在獨立執行緒中執行）"""
     global is_collecting, daq_instance, csv_data_queue, sql_data_queue
     global csv_writer_instance, sql_uploader_instance, sql_enabled
 
@@ -1009,7 +905,7 @@ def collection_loop():
             time.sleep(0.1)
 
 def csv_writer_loop():
-    """CSV 寫入迴圈"""
+    """CSV 寫入迴圈（在獨立執行緒中執行）"""
     global is_collecting, csv_writer_instance, sql_uploader_instance, sql_enabled
     global target_size, current_data_size, csv_data_queue
 
@@ -1071,7 +967,7 @@ def csv_writer_loop():
             time.sleep(0.1)
 
 def sql_writer_loop():
-    """SQL 寫入迴圈"""
+    """SQL 寫入迴圈（在獨立執行緒中執行）"""
     global is_collecting, sql_uploader_instance, sql_enabled, sql_current_temp_file
     global sql_target_size, sql_current_data_size, sql_sample_count, sql_start_time
     global sql_data_queue, csv_writer_instance, daq_instance
@@ -1153,19 +1049,7 @@ def sql_writer_loop():
 
 
 def run_flask_server(port: int = 8080):
-    """
-    在獨立執行緒中執行 Flask 伺服器
-    
-    此函數會在背景執行緒中啟動 Flask Web 伺服器，提供 HTTP API 和 Web 介面。
-    
-    Args:
-        port: Flask 伺服器監聽的埠號（預設為 8080）
-    
-    注意：
-        - 監聽所有網路介面（0.0.0.0），允許遠端存取
-        - 禁用除錯模式和重新載入器（避免與執行緒衝突）
-        - 禁用 Flask 的 HTTP 請求日誌，只顯示應用程式日誌
-    """
+    """在獨立執行緒中執行 Flask 伺服器"""
     log = logging.getLogger('werkzeug')
     log.setLevel(logging.ERROR)
     
@@ -1173,29 +1057,7 @@ def run_flask_server(port: int = 8080):
 
 
 def main():
-    """
-    主函數（程式入口點）
-    
-    此函數會：
-    1. 解析命令行參數（埠號）
-    2. 驗證埠號範圍
-    3. 在背景執行緒中啟動 Flask 伺服器
-    4. 主執行緒進入等待迴圈，等待使用者中斷
-    5. 收到中斷信號時安全關閉所有資源
-    
-    命令行參數：
-        -p, --port: Flask 伺服器監聽的埠號（預設: 8080）
-    
-    範例：
-        python src/main.py              # 使用預設 port 8080
-        python src/main.py --port 3000  # 使用自訂 port 3000
-        python src/main.py -p 9000      # 使用自訂 port 9000
-    
-    注意：
-        - 埠號範圍必須在 1-65535 之間
-        - 使用 Ctrl+C 可以安全關閉伺服器
-        - 關閉時會自動停止資料收集並關閉所有連線
-    """
+    """主函數（程式入口點）"""
     parser = argparse.ArgumentParser(
         description='PET-7H24M Real-time Data Visualization System',
         formatter_class=argparse.RawDescriptionHelpFormatter,

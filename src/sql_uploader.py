@@ -9,9 +9,7 @@ SQL 上傳器模組
 - 自動重連機制
 - 重試機制和資料保護（失敗時保留資料）
 - 執行緒安全
-- 支援動態通道數（2 或 3 通道）
-
-版本：4.0.0
+- 支援動態通道數
 """
 
 import time
@@ -48,32 +46,10 @@ if not PYMySQL_AVAILABLE and not MYSQL_CONNECTOR_AVAILABLE:
 
 
 class SQLUploader:
-    """
-    SQL 上傳器類別
-    
-    此類別負責將振動數據上傳至 SQL 伺服器，支援動態建立資料表和批次插入。
-    
-    使用方式：
-        uploader = SQLUploader(channels=2, label="test", sql_config={...})
-        uploader.create_table("20250101_test_001")
-        uploader.add_data_block([x1, y1, x2, y2, ...])
-        uploader.close()
-    """
+    """SQL 上傳器類別"""
 
     def __init__(self, channels: int, label: str, sql_config: Dict[str, str]):
-        """
-        初始化 SQL 上傳器
-
-        Args:
-            channels: 通道數量（2 或 3）
-            label: 標籤名稱
-            sql_config: SQL 伺服器設定字典，包含：
-                - host: 伺服器位置
-                - port: 連接埠
-                - user: 使用者名稱
-                - password: 密碼
-                - database: 資料庫名稱（可選）
-        """
+        """初始化 SQL 上傳器"""
         self.channels = channels
         self.label = label
         self.sql_config = sql_config
@@ -91,21 +67,21 @@ class SQLUploader:
         try:
             if PYMySQL_AVAILABLE:
                 return pymysql.connect(
-                    host=self.sql_config.get('host', 'localhost'),
+                    host=self.sql_config.get('host', '192.168.9.13'),
                     port=int(self.sql_config.get('port', 3306)),
-                    user=self.sql_config.get('user', 'root'),
-                    password=self.sql_config.get('password', ''),
-                    database=self.sql_config.get('database', 'pet7h24m'),
+                    user=self.sql_config.get('user', 'raspberrypi'),
+                    password=self.sql_config.get('password', 'Raspberry@Pi'),
+                    database=self.sql_config.get('database', 'daq-pet7h24m-data'),
                     charset='utf8mb4',
                     autocommit=False
                 )
             else:  # mysql.connector
                 return mysql.connector.connect(
-                    host=self.sql_config.get('host', 'localhost'),
+                    host=self.sql_config.get('host', '192.168.9.13'),
                     port=int(self.sql_config.get('port', 3306)),
-                    user=self.sql_config.get('user', 'root'),
-                    password=self.sql_config.get('password', ''),
-                    database=self.sql_config.get('database', 'pet7h24m'),
+                    user=self.sql_config.get('user', 'raspberrypi'),
+                    password=self.sql_config.get('password', 'Raspberry@Pi'),
+                    database=self.sql_config.get('database', 'daq-pet7h24m-data'),
                     autocommit=False
                 )
         except Exception as e:
@@ -113,20 +89,7 @@ class SQLUploader:
             raise
 
     def _sanitize_table_name(self, table_name: str) -> str:
-        """
-        清理表名，確保符合 SQL 命名規範
-        
-        SQL 表名限制：
-        - 只能包含字母、數字、底線
-        - 不能以數字開頭
-        - 不能包含特殊字元
-        
-        Args:
-            table_name: 原始表名（通常與 CSV 檔名相同）
-        
-        Returns:
-            str: 清理後的表名，符合 SQL 命名規範
-        """
+        """清理表名，確保符合 SQL 命名規範"""
         # 將不允許的字元替換為底線
         # 保留字母、數字、底線
         import re
@@ -141,24 +104,7 @@ class SQLUploader:
         return sanitized
     
     def create_table(self, table_name: str) -> bool:
-        """
-        建立新的資料表（表名與 CSV 檔名對應）
-        
-        每次 CSV 分檔時，會呼叫此方法建立對應的 SQL 表。
-        表名會與 CSV 檔名一致（經過清理以符合 SQL 命名規範）。
-        
-        Args:
-            table_name: 表名（通常與 CSV 檔名相同，不含 .csv 後綴）
-        
-        Returns:
-            bool: 建立成功返回 True，失敗返回 False
-        
-        注意：
-            - 表名會自動清理以符合 SQL 命名規範
-            - 如果表已存在，不會報錯（使用 CREATE TABLE IF NOT EXISTS）
-            - 建立成功後會設定 current_table_name
-            - 通道數會動態生成（支援 2 或 3 通道）
-        """
+        """建立新的資料表（表名與 CSV 檔名對應）"""
         try:
             # 清理表名以符合 SQL 命名規範
             sanitized_table_name = self._sanitize_table_name(table_name)
@@ -193,7 +139,7 @@ class SQLUploader:
             create_table_sql = f"""
             CREATE TABLE IF NOT EXISTS `{sanitized_table_name}` (
                 id BIGINT AUTO_INCREMENT PRIMARY KEY,
-                timestamp DATETIME NOT NULL,
+                timestamp DATETIME(6) NOT NULL,
                 label VARCHAR(255) NOT NULL,
                 {channel_columns},
                 INDEX idx_timestamp (timestamp),
@@ -238,30 +184,7 @@ class SQLUploader:
             return False
 
     def add_data_block(self, data: List[float]) -> bool:
-        """
-        新增數據區塊到 SQL 伺服器
-        
-        此方法會將資料按通道分組（每 channels 個為一組），
-        並使用批次插入（executemany）提升效能。
-        
-        錯誤處理機制：
-        - 最多重試 3 次
-        - 每次重試前會檢查連線狀態，如果斷線則嘗試重連
-        - 重試延遲時間遞增（0.1s, 0.2s, 0.3s）
-        - 如果所有重試都失敗，返回 False（資料不會遺失，會保留在緩衝區）
-        
-        Args:
-            data: 振動數據列表，格式為 [X1, Y1, X2, Y2, ...] 或 [X1, Y1, Z1, X2, Y2, Z2, ...]
-        
-        Returns:
-            bool: 上傳成功返回 True，失敗返回 False
-        
-        注意：
-            - 此方法使用執行緒鎖（upload_lock）確保多執行緒安全
-            - 如果資料長度不是 channels 的倍數，不足的部分會填充 0.0
-            - 所有資料使用相同的時間戳記（當前時間）
-            - 使用批次插入（executemany）可以大幅提升插入效能
-        """
+        """新增數據區塊到 SQL 伺服器（批次插入，支援重試機制）"""
         if not data or not self.is_connected:
             return False
 
